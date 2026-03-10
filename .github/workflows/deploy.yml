@@ -1,0 +1,291 @@
+name: Terraform CI/CD — Unleash Live
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  TF_VERSION: "1.7.5"
+  AWS_ACCESS_KEY_ID: mock
+  AWS_SECRET_ACCESS_KEY: mock
+  AWS_DEFAULT_REGION: us-east-1
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-validate:
+    name: "Lint & Validate — ${{ matrix.stack }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [stacks/auth, stacks/regional]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: ${{ matrix.stack }}
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+        working-directory: ${{ matrix.stack }}
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ${{ matrix.stack }}
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint-validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          soft_fail: true
+
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          soft_fail: true
+          output_format: cli
+
+  plan-auth:
+    name: Plan — Auth Stack
+    runs-on: ubuntu-latest
+    needs: security-scan
+    environment: plan
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: stacks/auth
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var="user_email=${{ secrets.COGNITO_USER_EMAIL }}" \
+            -var="user_temp_password=${{ secrets.COGNITO_TEMP_PASSWORD }}" \
+            -out=tfplan
+        working-directory: stacks/auth
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth-tfplan
+          path: stacks/auth/tfplan
+          retention-days: 3
+
+  deploy-auth:
+    name: Deploy — Auth Stack
+    runs-on: ubuntu-latest
+    needs: plan-auth
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: stacks/auth
+
+      - name: Terraform Apply
+        run: |
+          terraform apply -auto-approve \
+            -var="user_email=${{ secrets.COGNITO_USER_EMAIL }}" \
+            -var="user_temp_password=${{ secrets.COGNITO_TEMP_PASSWORD }}"
+        working-directory: stacks/auth
+
+      - name: Upload auth state
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth-tfstate
+          path: stacks/auth/terraform.tfstate
+          retention-days: 1
+
+  deploy-regional-us:
+    name: Deploy — Regional Stack (us-east-1)
+    runs-on: ubuntu-latest
+    needs: deploy-auth
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    outputs:
+      api_endpoint: ${{ steps.outputs.outputs.api_endpoint }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download auth state
+        uses: actions/download-artifact@v4
+        with:
+          name: auth-tfstate
+          path: stacks/auth/
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: stacks/regional
+
+      - name: Terraform Apply
+        run: |
+          terraform apply -auto-approve \
+            -var-file="../../environments/us-east-1.tfvars" \
+            -var="user_email=${{ secrets.COGNITO_USER_EMAIL }}" \
+            -var="repo_url=https://github.com/${{ github.repository }}"
+        working-directory: stacks/regional
+
+      - name: Capture API endpoint
+        id: outputs
+        run: echo "api_endpoint=$(terraform output -raw api_endpoint)" >> "$GITHUB_OUTPUT"
+        working-directory: stacks/regional
+
+  deploy-regional-eu:
+    name: Deploy — Regional Stack (eu-west-1)
+    runs-on: ubuntu-latest
+    needs: deploy-auth
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    outputs:
+      api_endpoint: ${{ steps.outputs.outputs.api_endpoint }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download auth state
+        uses: actions/download-artifact@v4
+        with:
+          name: auth-tfstate
+          path: stacks/auth/
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: stacks/regional
+
+      - name: Terraform Apply
+        run: |
+          terraform apply -auto-approve \
+            -var-file="../../environments/eu-west-1.tfvars" \
+            -var="user_email=${{ secrets.COGNITO_USER_EMAIL }}" \
+            -var="repo_url=https://github.com/${{ github.repository }}"
+        working-directory: stacks/regional
+
+      - name: Capture API endpoint
+        id: outputs
+        run: echo "api_endpoint=$(terraform output -raw api_endpoint)" >> "$GITHUB_OUTPUT"
+        working-directory: stacks/regional
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-regional-us, deploy-regional-eu]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download auth state
+        uses: actions/download-artifact@v4
+        with:
+          name: auth-tfstate
+          path: stacks/auth/
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install -r tests/requirements.txt
+
+      - name: Run deployment tests
+        env:
+          COGNITO_USER_EMAIL: ${{ secrets.COGNITO_USER_EMAIL }}
+          COGNITO_USER_PASSWORD: ${{ secrets.COGNITO_USER_PASSWORD }}
+          US_EAST_1_API_URL: ${{ needs.deploy-regional-us.outputs.api_endpoint }}
+          EU_WEST_1_API_URL: ${{ needs.deploy-regional-eu.outputs.api_endpoint }}
+        run: |
+          POOL_ID=$(terraform -chdir=stacks/auth output -raw user_pool_id)
+          CLIENT_ID=$(terraform -chdir=stacks/auth output -raw client_id)
+          python tests/test_deployment.py \
+            --user-pool-id  "$POOL_ID" \
+            --client-id     "$CLIENT_ID" \
+            --username      "$COGNITO_USER_EMAIL" \
+            --password      "$COGNITO_USER_PASSWORD" \
+            --us-east-1-url "$US_EAST_1_API_URL" \
+            --eu-west-1-url "$EU_WEST_1_API_URL"
