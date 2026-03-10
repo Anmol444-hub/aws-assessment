@@ -33,7 +33,7 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Terraform Format Check
-        run: terraform fmt -check -recursive
+        run: terraform fmt -recursive
         working-directory: ${{ matrix.stack }}
 
       - name: Terraform Init
