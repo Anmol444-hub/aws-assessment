@@ -122,13 +122,13 @@ terraform apply -var-file="../../environments/eu-west-1.tfvars"
 ```bash
 pip install -r tests/requirements.txt
 
-python tests/test_deployment.py \
-  --user-pool-id  <user-pool-id> \
-  --client-id     <client-id> \
+python3 tests/test_deployment.py \
+  --user-pool-id  us-east-1_RZD8viw3u \
+  --client-id     6opd3av8k39iq48cbbfefvhhdp \
   --username      anmoldongol4444@gmail.com \
   --password      Anmol@123 \
-  --us-east-1-url https://<id>.execute-api.us-east-1.amazonaws.com \
-  --eu-west-1-url https://<id>.execute-api.eu-west-1.amazonaws.com
+  --us-east-1-url https://pz9v7sgt4f.execute-api.us-east-1.amazonaws.com \
+  --eu-west-1-url https://4r1n5nrzh3.execute-api.eu-west-1.amazonaws.com
 ```
 
 The script authenticates with Cognito, concurrently hits `/greet` and `/dispatch` in both regions, asserts each response contains the correct region name, and prints per-request latency to show the geographic performance difference.
