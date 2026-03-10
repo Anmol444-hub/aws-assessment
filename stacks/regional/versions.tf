@@ -12,5 +12,5 @@ terraform {
     }
   }
 
-
+  backend "s3" {}
 }

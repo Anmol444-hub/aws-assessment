@@ -85,7 +85,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -backend-config="../../environments/backend-auth.hcl"
         working-directory: stacks/auth
 
       - name: Terraform Plan
@@ -126,7 +126,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -backend-config="../../environments/backend-auth.hcl"
         working-directory: stacks/auth
 
       - name: Terraform Apply
@@ -135,13 +135,6 @@ jobs:
             -var="user_email=${{ secrets.COGNITO_USER_EMAIL }}" \
             -var="user_temp_password=${{ secrets.COGNITO_TEMP_PASSWORD }}"
         working-directory: stacks/auth
-
-      - name: Upload auth state
-        uses: actions/upload-artifact@v4
-        with:
-          name: auth-tfstate
-          path: stacks/auth/terraform.tfstate
-          retention-days: 1
 
   deploy-regional-us:
     name: Deploy — Regional Stack (us-east-1)
@@ -153,12 +146,6 @@ jobs:
       api_endpoint: ${{ steps.outputs.outputs.api_endpoint }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download auth state
-        uses: actions/download-artifact@v4
-        with:
-          name: auth-tfstate
-          path: stacks/auth/
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -174,7 +161,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -backend-config="../../environments/backend-us-east-1.hcl"
         working-directory: stacks/regional
 
       - name: Terraform Apply
@@ -201,12 +188,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download auth state
-        uses: actions/download-artifact@v4
-        with:
-          name: auth-tfstate
-          path: stacks/auth/
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -221,7 +202,7 @@ jobs:
           aws-region: eu-west-1
 
       - name: Terraform Init
-        run: terraform init
+        run: terraform init -backend-config="../../environments/backend-eu-west-1.hcl"
         working-directory: stacks/regional
 
       - name: Terraform Apply
@@ -246,12 +227,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download auth state
-        uses: actions/download-artifact@v4
-        with:
-          name: auth-tfstate
-          path: stacks/auth/
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -264,6 +239,10 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
+
+      - name: Terraform Init (auth)
+        run: terraform init -backend-config="../../environments/backend-auth.hcl"
+        working-directory: stacks/auth
 
       - name: Setup Python 3.12
         uses: actions/setup-python@v5

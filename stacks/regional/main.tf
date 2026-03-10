@@ -3,9 +3,11 @@ provider "aws" {
 }
 
 data "terraform_remote_state" "auth" {
-  backend = "local"
+  backend = "s3"
   config = {
-    path = "${path.root}/../auth/terraform.tfstate"
+    bucket = "unleash-live-tfstate-anmol"
+    key    = "auth/terraform.tfstate"
+    region = "us-east-1"
   }
 }
 
